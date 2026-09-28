@@ -76,32 +76,6 @@ python demo_cli.py  # full seeded demo, snippets 1-5
 python seed.py payments-service   # load seeds into a project bank only
 ```
 
-## Demo sequence
-
-1. Seed the bank once from a terminal (the app has no seed button):
-   `python seed.py payments-service` loads the 10 team memories.
-   Use the sidebar **Dark mode** toggle for a dark theme.
-2. Paste the snippet 1 code from `seed.py` and click **Review Code** — the
-   agent flags missing type hints.
-3. **Accept** the comment and **Submit Feedback** — the outcome is remembered.
-4. Review the snippet 2 code — the agent flags type hints again and references
-   the previous flag ("Flagged again ... raised in a previous review").
-5. Review the snippet 3 code (logging) and snippet 4 code (None-check and
-   error handling) — later snippets draw on earlier outcomes.
-6. Reject a comment with a reason, submit, and re-review: the rejected
-   suggestion is no longer repeated (Critical issues can still override).
-7. Review the snippet 5 code — clean code shows **No issues found**.
-8. Click **View team memory** to inspect what the bank holds, and watch the
-   accepted/rejected session tally grow as you give feedback.
-9. Click **Generate fixed code** to get the corrected file with all
-   non-rejected findings applied, plus a download button. Submitting feedback
-   twice is blocked; each review accepts one submission.
-
-Every review header shows "N team memories retrieved", and each memory-driven
-comment has a "Why this suggestion?" expander quoting the exact memory text.
-If Hindsight is down, the review still runs and is labelled
-"no team memory used".
-
 ## How persistent memory changes later reviews
 
 Before every review the agent recalls from the current project's bank with two
