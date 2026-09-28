@@ -29,7 +29,7 @@ def get_last_usage() -> dict:
     return dict(last_call)
 
 
-def complete(system: str, user: str) -> str:
+def complete(system: str, user: str, max_tokens: int = MAX_OUTPUT_TOKENS) -> str:
     """Call the configured model and return the raw text response."""
     try:
         import litellm
@@ -73,7 +73,7 @@ def complete(system: str, user: str) -> str:
             ],
             temperature=0.1,
             api_key=key,
-            max_tokens=MAX_OUTPUT_TOKENS,
+            max_tokens=max_tokens,
             **extra,
         )
     except Exception as exc:

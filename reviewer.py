@@ -39,6 +39,18 @@ class ReviewError(Exception):
     """Raised when a review cannot be completed (e.g. LLM output unusable)."""
 
 
+class FixedCodeResult(BaseModel):
+    fixed_code: str
+    applied: list[str] = Field(default_factory=list)
+    model_used: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
+# Full-file rewrites need more headroom than capped review JSON.
+APPLY_MAX_TOKENS = 4000
+
+
 def _code_query(code: str, description: str) -> str:
     """Derive a code-focused recall query from the submission."""
     names = re.findall(r"def\s+([a-zA-Z_][a-zA-Z0-9_]*)", code)
@@ -226,8 +238,7 @@ def review(project: str, code: str, description: str = "") -> ReviewResult:
         valid.append(c)
 
     valid = _apply_rejections(valid, memories)
-    get_usage = getattr(llm, "get_last_usage", None)
-    usage = get_usage() if callable(get_usage) else {}
+    usage = _last_usage()
     return ReviewResult(
         comments=valid[:MAX_COMMENTS],
         recalled_memories=memories,
@@ -237,3 +248,71 @@ def review(project: str, code: str, description: str = "") -> ReviewResult:
         prompt_tokens=usage.get("prompt_tokens", 0) or 0,
         completion_tokens=usage.get("completion_tokens", 0) or 0,
     )
+
+
+def _last_usage() -> dict:
+    get_usage = getattr(llm, "get_last_usage", None)
+    return get_usage() if callable(get_usage) else {}
+
+
+def apply_fixes(code: str, comments: list[ReviewComment]) -> FixedCodeResult:
+    """Rewrite the full file applying the given (non-rejected) findings.
+
+    Returns the corrected code plus the titles it applied. Raises ValueError
+    when there is nothing to apply, ReviewError when the LLM output is unusable.
+    """
+    applicable = [c for c in comments if c.title.strip()]
+    if not (code or "").strip():
+        raise ValueError("No code to fix.")
+    if not applicable:
+        raise ValueError("No accepted findings to apply.")
+    findings = "\n".join(
+        f"- [{c.severity}] {c.title}: {c.explanation}"
+        + (f" Suggested fix: {c.suggestion}" if (c.suggestion or "").strip() else "")
+        + (f" Offending code: {c.evidence}" if (c.evidence or "").strip() else "")
+        for c in applicable
+    )
+    system = (
+        "You are a precise code editor. Return ONLY valid JSON matching the "
+        "requested schema. Do not wrap it in code fences."
+    )
+    user = f"""Rewrite the complete file below, applying ONLY these accepted review
+findings. Preserve everything else exactly: logic, names, structure, comments.
+Keep the file the same length where possible; change only what the findings require.
+
+Findings to apply:
+{findings}
+
+Original code:
+```
+{code}
+```
+
+Respond with JSON of exactly this shape:
+{{"fixed_code": "<complete corrected file>", "applied": ["finding titles you applied"]}}"""
+    last_error: Exception | None = None
+    result: FixedCodeResult | None = None
+    for attempt in (1, 2):
+        try:
+            raw = llm.complete(system, user, max_tokens=APPLY_MAX_TOKENS)
+        except llm.LLMError as exc:
+            raise ReviewError(f"LLM call failed: {exc}") from exc
+        try:
+            data = json.loads(_strip_fences(raw))
+            result = FixedCodeResult.model_validate(data)
+            if not result.fixed_code.strip():
+                raise ValueError("LLM returned empty fixed code")
+            break
+        except (json.JSONDecodeError, ValueError, ValidationError) as exc:
+            last_error = exc
+            print(f"[reviewer] apply attempt {attempt}: unusable output ({exc}); retrying...")
+            result = None
+    if result is None:
+        raise ReviewError(
+            f"LLM returned unusable fixed code twice; giving up. Last error: {last_error}"
+        )
+    usage = _last_usage()
+    result.model_used = usage.get("model", "")
+    result.prompt_tokens = usage.get("prompt_tokens", 0) or 0
+    result.completion_tokens = usage.get("completion_tokens", 0) or 0
+    return result

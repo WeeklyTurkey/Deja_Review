@@ -1,6 +1,15 @@
-[theme]
-base = "light"
+# Streamlit picks the light or dark theme from the user's system setting, and
+# the user can switch it from the app's Settings menu (top-right).
+
+[theme.light]
 primaryColor = "#5B7C8D"
 backgroundColor = "#F7F6F3"
 secondaryBackgroundColor = "#EFEDE8"
 textColor = "#2B2D31"
+
+[theme.dark]
+primaryColor = "#6F93A6"
+backgroundColor = "#14171A"
+secondaryBackgroundColor = "#1E2329"
+textColor = "#E8E6E3"
+linkColor = "#8FB3C7"

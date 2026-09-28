@@ -125,12 +125,19 @@ SNIPPET_FILES: dict[int, str] = {
 }
 
 
-def seed_project(project: str) -> int:
-    """Retain all seed memories into the project's bank. Returns count retained."""
+def seed_project(project: str, on_each=None) -> int:
+    """Retain all seed memories into the project's bank. Returns count retained.
+
+    `on_each`, when given, is called as `on_each(i, total, text)` after each
+    memory is retained so callers can show live per-memory progress.
+    """
     count = 0
-    for text in SEED_MEMORIES:
+    total = len(SEED_MEMORIES)
+    for i, text in enumerate(SEED_MEMORIES, 1):
         memory.retain(project, text)
         count += 1
+        if on_each is not None:
+            on_each(i, total, text)
     return count
 
 

@@ -12,16 +12,18 @@ import streamlit as st
 
 import memory
 import reviewer
-import seed
 
 st.set_page_config(page_title="Hindsight Code Review", layout="wide")
 
+# Badge tints are translucent and the text inherits the active theme colour, so
+# the same badges read correctly in both the light and dark themes.
 SEVERITY_COLORS = {
-    "Critical": ("#F8D7DA", "#842029"),
-    "Major": ("#FFF3CD", "#664D03"),
-    "Minor": ("#E2E8F0", "#334155"),
-    "Suggestion": ("#E2E8F0", "#334155"),
+    "Critical": ("rgba(220, 53, 69, 0.18)", "rgba(220, 53, 69, 0.55)"),
+    "Major": ("rgba(245, 158, 11, 0.20)", "rgba(245, 158, 11, 0.55)"),
+    "Minor": ("rgba(100, 116, 139, 0.22)", "rgba(100, 116, 139, 0.55)"),
+    "Suggestion": ("rgba(100, 116, 139, 0.22)", "rgba(100, 116, 139, 0.55)"),
 }
+DEFAULT_BADGE = SEVERITY_COLORS["Suggestion"]
 
 # --- session state ------------------------------------------------------------
 if "history" not in st.session_state:
@@ -34,6 +36,16 @@ if "code" not in st.session_state:
     st.session_state.code = ""
 if "description" not in st.session_state:
     st.session_state.description = ""
+if "accepted" not in st.session_state:
+    st.session_state.accepted = 0
+if "rejected" not in st.session_state:
+    st.session_state.rejected = 0
+if "review_seq" not in st.session_state:
+    st.session_state.review_seq = 0
+if "feedback_saved_for" not in st.session_state:
+    st.session_state.feedback_saved_for = -1
+if "fixed" not in st.session_state:
+    st.session_state.fixed = None
 
 # --- header -------------------------------------------------------------------
 st.title("Hindsight Code Review")
@@ -42,41 +54,24 @@ project = st.selectbox("Project", list(memory.PROJECTS), index=0)
 
 # --- sidebar ------------------------------------------------------------------
 with st.sidebar:
-    st.header("Team knowledge")
-    if st.button("Load demo seed"):
+    st.subheader("Team memory")
+    st.caption(
+        f"Accepted {st.session_state.accepted} · "
+        f"Rejected {st.session_state.rejected}"
+    )
+    if st.button("View team memory", use_container_width=True):
         try:
-            n = seed.seed_project(project)
-            st.success(f"Loaded {n} team memories into {project}.")
+            mems = memory.recall(
+                project, "team coding conventions, standards and preferences"
+            )
         except memory.MemoryUnavailable as exc:
             st.warning(f"Hindsight unavailable: {exc}")
+            mems = []
+        with st.expander(f"{len(mems)} memories match", expanded=True):
+            for m in mems:
+                st.write(f"- {m}")
 
-    snippet_choice = st.selectbox(
-        "Demo snippet picker",
-        ["(none)"] + [f"Snippet {n}: {seed.SNIPPET_TITLES[n]}" for n in range(1, 6)],
-    )
-    if st.button("Load snippet") and not snippet_choice.startswith("(none)"):
-        n = int(snippet_choice.split(":")[0].replace("Snippet ", ""))
-        st.session_state.code = seed.get_snippet(n)
-        st.session_state.result = None
-        st.session_state.feedback = {}
-        st.rerun()
-
-    st.header("Teach a standard")
-    standard = st.text_input(
-        "New team standard",
-        placeholder="e.g. We prefer early returns.",
-    )
-    if st.button("Teach"):
-        if not standard.strip():
-            st.warning("Type a standard first.")
-        else:
-            try:
-                memory.retain(project, standard.strip())
-                st.success("Standard remembered.")
-            except memory.MemoryUnavailable as exc:
-                st.warning(f"Hindsight unavailable: {exc}")
-
-    st.header("Review history")
+    st.subheader("Review history")
     if not st.session_state.history:
         st.caption("No reviews yet this session.")
     for entry in reversed(st.session_state.history):
@@ -99,6 +94,8 @@ if st.button("Review Code", type="primary"):
     st.session_state.description = description
     st.session_state.result = None
     st.session_state.feedback = {}
+    st.session_state.fixed = None
+    st.session_state.review_seq += 1
     if not code.strip():
         st.warning("Paste some code before reviewing.")
     else:
@@ -116,6 +113,9 @@ if st.button("Review Code", type="primary"):
                 }
             )
             status.update(label="Review complete.", state="complete")
+            # Rerun so the sidebar (history, tally) reflects this review
+            # in the same interaction instead of lagging one run behind.
+            st.rerun()
         except reviewer.ReviewError as exc:
             status.update(label="Review failed.", state="error")
             st.error(str(exc))
@@ -140,9 +140,9 @@ if result is not None:
     if not result.comments:
         st.success("No issues found")
     for i, c in enumerate(result.comments):
-        bg, fg = SEVERITY_COLORS.get(c.severity, ("#E2E8F0", "#334155"))
+        bg, border = SEVERITY_COLORS.get(c.severity, DEFAULT_BADGE)
         st.markdown(
-            f"<span style='background:{bg};color:{fg};"
+            f"<span style='background:{bg};border:1px solid {border};color:inherit;"
             f"padding:2px 10px;border-radius:10px;font-size:0.85em;'>"
             f"{c.severity}</span> **{c.title}**",
             unsafe_allow_html=True,
@@ -171,21 +171,66 @@ if result is not None:
             )
         st.session_state.feedback[i] = (choice, reason)
 
-    if result.comments and st.button("Submit Feedback"):
+    saved = st.session_state.feedback_saved_for == st.session_state.review_seq
+    if saved:
+        st.caption("Feedback saved for this review.")
+    if result.comments and st.button("Submit Feedback", disabled=saved):
         acted = 0
-        for i, c in enumerate(result.comments):
-            choice, reason = st.session_state.feedback.get(i, ("No action", ""))
-            if choice == "No action":
-                continue
-            if choice == "Accept":
-                text = f"Flagged {c.title}; accepted."
-            else:
-                text = f"Rejected suggestion to {c.title}; reason: {reason or 'no reason given'}"
-            try:
-                memory.retain(project, text)
-                acted += 1
-            except memory.MemoryUnavailable as exc:
-                st.warning(f"Hindsight unavailable, outcome not saved: {exc}")
-                break
+        with st.spinner("Saving feedback to team memory..."):
+            for i, c in enumerate(result.comments):
+                choice, reason = st.session_state.feedback.get(i, ("No action", ""))
+                if choice == "No action":
+                    continue
+                if choice == "Accept":
+                    text = f"Flagged {c.title}; accepted."
+                else:
+                    text = f"Rejected suggestion to {c.title}; reason: {reason or 'no reason given'}"
+                try:
+                    memory.retain(project, text)
+                    acted += 1
+                    if choice == "Accept":
+                        st.session_state.accepted += 1
+                    else:
+                        st.session_state.rejected += 1
+                except memory.MemoryUnavailable as exc:
+                    st.warning(f"Hindsight unavailable, outcome not saved: {exc}")
+                    break
         if acted:
             st.success(f"Saved {acted} outcome(s) to team memory.")
+            st.session_state.feedback_saved_for = st.session_state.review_seq
+            # Rerun so the Submit button disables immediately instead of
+            # staying clickable until the next interaction.
+            st.rerun()
+
+    if result.comments:
+        st.subheader("Fixed code")
+        applyable = [
+            c
+            for i, c in enumerate(result.comments)
+            if st.session_state.feedback.get(i, ("No action", ""))[0] != "Reject"
+        ]
+        if not applyable:
+            st.caption("All findings rejected — nothing to apply.")
+        elif st.button("Generate fixed code"):
+            with st.spinner("Applying accepted findings..."):
+                try:
+                    st.session_state.fixed = reviewer.apply_fixes(
+                        st.session_state.code, applyable
+                    )
+                except (reviewer.ReviewError, ValueError) as exc:
+                    st.error(str(exc))
+                    st.session_state.fixed = None
+        fixed = st.session_state.fixed
+        if fixed is not None:
+            st.code(fixed.fixed_code, language="python")
+            st.download_button(
+                "Download fixed code",
+                fixed.fixed_code,
+                file_name="fixed_code.py",
+            )
+            st.caption(
+                f"Applied {len(fixed.applied)} finding(s)"
+                + (f" with `{fixed.model_used}`" if fixed.model_used else "")
+                + f" · {fixed.prompt_tokens} input / "
+                f"{fixed.completion_tokens} output tokens"
+            )
