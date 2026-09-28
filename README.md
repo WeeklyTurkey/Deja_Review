@@ -1,4 +1,4 @@
-# Hindsight Code Review Agent
+# Déjà Review
 
 A memory-augmented code review agent. Its value is persistent team memory
 through Hindsight: as it accumulates team standards, past review outcomes and
